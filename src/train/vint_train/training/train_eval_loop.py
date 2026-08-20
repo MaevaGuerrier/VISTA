@@ -1,0 +1,209 @@
+import wandb
+import os
+import gc
+import numpy as np
+from typing import List, Optional, Dict
+from prettytable import PrettyTable
+
+from vint_train.training.train_utils import train, evaluate
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
+from torch.optim import Adam
+from torchvision import transforms
+
+from timm.scheduler import CosineLRScheduler
+
+def train_eval_loop(
+    train_model: bool,
+    model: nn.Module,
+    optimizer: Adam,
+    scheduler: Optional[torch.optim.lr_scheduler._LRScheduler],
+    dataloader: DataLoader,
+    test_dataloaders: Dict[str, DataLoader],
+    transform: transforms,
+    epochs: int,
+    device: torch.device,
+    project_folder: str,
+    normalized: bool,
+    wandb_log_freq: int = 10,
+    print_log_freq: int = 100,
+    image_log_freq: int = 1000,
+    num_images_log: int = 8,
+    current_epoch: int = 0,
+    alpha: float = 0.5,
+    learn_angle: bool = True,
+    use_wandb: bool = True,
+    eval_fraction: float = 0.25,
+    log_high_loss_samples: bool = False,
+    ignore_high_loss_epochs: int = 0,
+    high_loss_threshold: float = 10.0,
+    max_high_loss_samples: int = 10,
+    distance_loss_coeff: float = 0.01,
+    action_loss_type: str = "mse",
+    distance_loss_type: str = "mse",
+    pass_action_history: bool = False
+):
+    """
+    Train and evaluate the model for several epochs 
+
+    Args:
+        train_model: whether to train the model or not
+        model: model to train
+        optimizer: optimizer to use
+        scheduler: learning rate scheduler to use
+        dataloader: dataloader for train dataset
+        test_dataloaders: dict of dataloaders for testing
+        transform: transform to apply to images
+        epochs: number of epochs to train
+        device: device to train on
+        project_folder: folder to save checkpoints and logs
+        normalized: whether to normalize the action space or not
+        wandb_log_freq: frequency of logging to wandb
+        print_log_freq: frequency of printing to console
+        image_log_freq: frequency of logging images to wandb
+        num_images_log: number of images to log to wandb
+        current_epoch: epoch to start training from
+        alpha: tradeoff between distance and action loss
+        learn_angle: whether to learn the angle or not
+        use_wandb: whether to log to wandb or not
+        eval_fraction: fraction of training data to use for evaluation
+        log_high_loss_samples: whether to log samples with high loss
+        ignore_high_loss_epochs: number of initial epochs to ignore when logging high loss samples (to avoid logging uninformative samples early in training)
+        high_loss_threshold: threshold for considering a loss as high
+        max_high_loss_samples: maximum number of high loss samples to log per epoch
+        distance_loss_coeff: coefficient to multiply the distance loss (default: 0.01)
+        action_loss_type: type of action loss to use ("mse", "mape", "waypoint_spacing_scaled_mse")
+        distance_loss_type: type of distance loss to use ("mse", "waypoint_spacing_scaled_mse")
+    """
+    assert 0 <= alpha <= 1
+    latest_path = os.path.join(project_folder, f"latest.pth")
+
+    for epoch in range(current_epoch, current_epoch + epochs):
+        if train_model:
+            print(
+            f"Start ViNT Training Epoch {epoch}/{current_epoch + epochs - 1}"
+            )
+            train(
+                model=model,
+                optimizer=optimizer,
+                dataloader=dataloader,
+                transform=transform,
+                device=device,
+                project_folder=project_folder,
+                normalized=normalized,
+                epoch=epoch,
+                scheduler=scheduler if isinstance(scheduler, CosineLRScheduler) else None,
+                alpha=alpha,
+                learn_angle=learn_angle,
+                print_log_freq=print_log_freq,
+                wandb_log_freq=wandb_log_freq,
+                image_log_freq=image_log_freq,
+                num_images_log=num_images_log,
+                use_wandb=use_wandb,
+                log_high_loss_samples=log_high_loss_samples and epoch >= ignore_high_loss_epochs,
+                high_loss_threshold=high_loss_threshold,
+                max_high_loss_samples=max_high_loss_samples,
+                distance_loss_coeff=distance_loss_coeff,
+                action_loss_type=action_loss_type,
+                distance_loss_type=distance_loss_type,
+                pass_action_history=pass_action_history
+            )
+
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        avg_total_test_loss = []
+        for dataset_type in test_dataloaders:
+            print(
+                f"Start {dataset_type} ViNT Testing Epoch {epoch}/{current_epoch + epochs - 1}"
+            )
+            loader = test_dataloaders[dataset_type]
+
+            test_dist_loss, test_action_loss, total_eval_loss = evaluate(
+                eval_type=dataset_type,
+                model=model,
+                dataloader=loader,
+                transform=transform,
+                device=device,
+                project_folder=project_folder,
+                normalized=normalized,
+                epoch=epoch,
+                alpha=alpha,
+                learn_angle=learn_angle,
+                distance_loss_coeff=distance_loss_coeff,
+                num_images_log=num_images_log,
+                use_wandb=use_wandb,
+                eval_fraction=eval_fraction,
+                action_loss_type=action_loss_type,
+                distance_loss_type=distance_loss_type,
+                pass_action_history=pass_action_history
+            )
+
+            avg_total_test_loss.append(total_eval_loss)
+
+        checkpoint = {
+            "epoch": epoch,
+            "model": model,
+            "optimizer": optimizer,
+            "avg_total_test_loss": np.mean(avg_total_test_loss),
+            "scheduler": scheduler
+        }
+        # log average eval loss
+        wandb.log({}, commit=False)
+
+        if scheduler is not None:
+            # scheduler calls based on the type of scheduler
+            if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                scheduler.step(np.mean(avg_total_test_loss))
+            elif isinstance(scheduler, CosineLRScheduler):
+                pass # stepped per iteration in train function
+            else:
+                scheduler.step()
+        wandb.log({
+            "avg_total_test_loss": np.mean(avg_total_test_loss),
+            "lr": optimizer.param_groups[0]["lr"],
+        }, commit=False)
+
+        numbered_path = os.path.join(project_folder, f"{epoch}.pth")
+        torch.save(checkpoint, latest_path)
+        torch.save(checkpoint, numbered_path)  # keep track of model at every epoch
+
+        # Flush wandb and collect garbage
+        wandb.log({}, commit=True)
+        gc.collect()
+        torch.cuda.empty_cache()
+
+    # Flush the last set of eval logs
+    wandb.log({})
+    print()
+
+def load_model(model, model_type, checkpoint: dict) -> None:
+    """Load model from checkpoint."""
+    loaded_model = checkpoint["model"]
+    try:
+        state_dict = loaded_model.module.state_dict()
+        model.load_state_dict(state_dict, strict=False)
+    except AttributeError as e:
+        state_dict = loaded_model.state_dict()
+        model.load_state_dict(state_dict, strict=False)
+
+
+def load_ema_model(ema_model, state_dict: dict) -> None:
+    """Load model from checkpoint."""
+    ema_model.load_state_dict(state_dict)
+
+
+def count_parameters(model):
+    table = PrettyTable(["Modules", "Parameters"])
+    total_params = 0
+    for name, parameter in model.named_parameters():
+        if not parameter.requires_grad: continue
+        params = parameter.numel()
+        table.add_row([name, params])
+        total_params+=params
+    # print(table)
+    print(f"Total Trainable Params: {total_params/1e6:.2f}M")
+    return total_params

@@ -30,6 +30,8 @@ src/deployment/src/ros1/visualizations/
 *.db3
 *.whl
 
+!src/deployment/topomaps/images/warehouse/*.png
+
 
 metadata.yaml
 

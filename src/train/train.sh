@@ -1,0 +1,1 @@
+python train.py --config config/vint_finetune.yaml

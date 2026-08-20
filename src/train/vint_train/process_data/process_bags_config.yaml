@@ -1,0 +1,79 @@
+tartan_drive:
+  odomtopics: "/odometry/filtered_odom"
+  imtopics: "/multisense/left/image_rect_color" 
+  ang_offset: 1.5707963267948966 # pi/2
+  img_process_func: "process_tartan_img"
+  odom_process_func: "nav_to_xy_yaw"
+
+scand:
+  odomtopics: ["/odom", "/jackal_velocity_controller/odom"]
+  imtopics: ["/image_raw/compressed", "/camera/rgb/image_raw/compressed"]
+  ang_offset: 0.0
+  img_process_func: "process_scand_img"
+  odom_process_func: "nav_to_xy_yaw"
+
+locobot:
+  odomtopics: "/odom"
+  imtopics: "/usb_cam/image_raw"
+  ang_offset: 0.0
+  img_process_func: "process_locobot_img"
+  odom_process_func: "nav_to_xy_yaw"
+
+sacson:
+  odomtopics: "/odometry"
+  imtopics: "/fisheye_image/compressed"
+  ang_offset: 0.0
+  img_process_func: "process_sacson_img"
+  odom_process_func: "nav_to_xy_yaw"
+
+# add your own datasets below:
+
+bunker_bags:
+  odomtopics: "/lvi_sam/lidar/mapping/odometry"
+  imtopics: "/usb_cam/image_raw/compressed"
+  ang_offset: 0.0
+  img_process_func: "process_sacson_img"
+  odom_process_func: "nav_to_xy_yaw"
+
+bunker_bags_references:
+  odomtopics: "/lvi_sam/lidar/mapping/odometry"
+  imtopics: "/usb_cam/image_raw"
+  ang_offset: 0.0
+  img_process_func: "process_reference_img"
+  odom_process_func: "nav_to_xy_yaw"
+
+arena_hard:
+  odomtopics: "/laser_odometry"
+  imtopics: "/usb_cam/image_raw/compressed"
+  ang_offset: 0.0
+  img_process_func: "process_sacson_img"
+  odom_process_func: "nav_to_xy_yaw"
+
+office_loop_5dec:
+  odomtopics: "/lvi_sam/lidar/mapping/odometry"
+  imtopics: "/usb_cam/image_raw/compressed"
+  ang_offset: 0.0
+  img_process_func: "process_reference_img"
+  odom_process_func: "nav_to_xy_yaw"
+
+hall_loop:
+  odomtopics: "/lvi_sam/lidar/mapping/odometry"
+  imtopics: "/usb_cam/image_raw/compressed"
+  ang_offset: 0.0
+  img_process_func: "process_sacson_img"
+  odom_process_func: "nav_to_xy_yaw"
+
+door_loop:
+  odomtopics: "/lvi_sam/lidar/mapping/odometry"
+  imtopics: "/usb_cam/image_raw/compressed"
+  ang_offset: 0.0
+  img_process_func: "process_sacson_img"
+  odom_process_func: "nav_to_xy_yaw"
+
+out_snow:
+  odomtopics: "/lvi_sam/lidar/mapping/odometry"
+  imtopics: "/usb_cam/image_raw/compressed"
+  ang_offset: 0.0
+  img_process_func: "process_sacson_img"
+  odom_process_func: "nav_to_xy_yaw"
+

@@ -1,0 +1,475 @@
+import os
+import wandb
+import argparse
+import numpy as np
+import yaml
+import time
+import re
+
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader, ConcatDataset, Subset
+from torch.optim import Adam, AdamW
+from torchvision import transforms
+import torch.backends.cudnn as cudnn
+from warmup_scheduler import GradualWarmupScheduler
+
+from timm.utils import ModelEmaV2
+from timm.scheduler import CosineLRScheduler
+
+from vint_train.models.vint.vint import ViNT
+from vint_train.models.vint.vint_dino import ViNTWithDINOTokens
+#from vint_train.models.vint.vint_da import ViNTWithDepthAnything
+
+from vint_train.data.vint_dataset import ViNT_Dataset
+from vint_train.training.train_eval_loop import (
+    train_eval_loop,
+    load_model,
+)
+
+
+def resolve_env_vars(obj):
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            obj[key] = resolve_env_vars(value)
+    elif isinstance(obj, list):
+        for i, item in enumerate(obj):
+            obj[i] = resolve_env_vars(item)
+    elif isinstance(obj, str):
+        pattern = re.compile(r"\$\{(\w+)\}")
+        def replace(match):
+            env_var = match.group(1)
+            return os.getenv(env_var, match.group(0))
+        return pattern.sub(replace, obj)
+    return obj
+
+
+def main(config):
+    assert config["distance"]["min_dist_cat"] < config["distance"]["max_dist_cat"]
+    assert config["action"]["min_dist_cat"] < config["action"]["max_dist_cat"]
+
+    if torch.cuda.is_available():
+        os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+        if "gpu_ids" not in config:
+            config["gpu_ids"] = [0]
+        elif isinstance(config["gpu_ids"], int):
+            config["gpu_ids"] = [config["gpu_ids"]]
+        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(
+            [str(x) for x in config["gpu_ids"]]
+        )
+        print("Using cuda devices:", os.environ["CUDA_VISIBLE_DEVICES"])
+    else:
+        print("Using cpu")
+
+    first_gpu_id = config["gpu_ids"][0]
+    device = torch.device(
+        f"cuda:{first_gpu_id}" if torch.cuda.is_available() else "cpu"
+    )
+
+    if "seed" in config:
+        np.random.seed(config["seed"])
+        torch.manual_seed(config["seed"])
+        cudnn.deterministic = True
+
+    cudnn.benchmark = True  # good if input sizes don't vary
+    # The original authors just used ImageNet mean and std code https://pytorch.org/vision/0.9/transforms.html
+    # There is no explications here for why thoses values where chosen 
+    # According to the community those values are working for RGB images for ImageNet ("like many things in (deep) machine learning, it just happens to work well.")
+    transform = ([
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]), 
+    ])
+    transform = transforms.Compose(transform)
+
+    # Load the data
+    train_dataset = []
+    test_dataloaders = {}
+
+    if "context_type" not in config:
+        config["context_type"] = "temporal"
+
+    if "clip_goals" not in config:
+        config["clip_goals"] = False
+
+    for dataset_name in config["datasets"]:
+        data_config = config["datasets"][dataset_name]
+        if "negative_mining" not in data_config:
+            data_config["negative_mining"] = True
+        if "goals_per_obs" not in data_config:
+            data_config["goals_per_obs"] = 1
+        if "end_slack" not in data_config:
+            data_config["end_slack"] = 0
+        if "waypoint_spacing" not in data_config:
+            data_config["waypoint_spacing"] = 1
+        if "learn_metric_distance" not in config:
+            config["learn_metric_distance"] = False
+        if "metric_distance_for_negatives" not in config:
+            config["metric_distance_for_negatives"] = False
+
+        for data_split_type in ["train", "test"]:
+            if data_split_type in data_config:
+                    dataset = ViNT_Dataset(
+                        data_folder=data_config["data_folder"],
+                        data_split_folder=data_config[data_split_type],
+                        dataset_name=dataset_name,
+                        image_size=config["image_size"],
+                        waypoint_spacing=data_config["waypoint_spacing"],
+                        min_dist_cat=config["distance"]["min_dist_cat"],
+                        max_dist_cat=config["distance"]["max_dist_cat"],
+                        min_action_distance=config["action"]["min_dist_cat"],
+                        max_action_distance=config["action"]["max_dist_cat"],
+                        negative_mining=data_config["negative_mining"],
+                        len_traj_pred=config["len_traj_pred"],
+                        learn_angle=config["learn_angle"],
+                        context_size=config["context_size"],
+                        context_type=config["context_type"],
+                        end_slack=data_config["end_slack"],
+                        goals_per_obs=data_config["goals_per_obs"],
+                        normalize=config["normalize"],
+                        goal_type=config["goal_type"],
+                        flip_aug=config["flip_aug"] if "flip_aug" in config and data_split_type=="train" else False,
+                        image_aug=config["image_aug"] if "image_aug" in config and data_split_type=="train" else False,
+                        image_aug_params=config["image_aug_params"] if "image_aug_params" in config and data_split_type=="train" else {},
+                        learn_metric_distance=config["learn_metric_distance"],
+                        metric_distance_for_negatives=config["metric_distance_for_negatives"],
+                        fluctuate_actions=config.get("fluctuate_actions", False) if data_split_type=="train" else False,
+                        action_fluctuation_amount=config.get("action_fluctuation_amount", 0.2),
+                    )
+                    if data_split_type == "train":
+                        train_dataset.append(dataset)
+                    else:
+                        dataset_type = f"{dataset_name}_{data_split_type}"
+                        test_dataloaders[dataset_type] = dataset
+
+    # combine all the datasets from different robots
+    train_dataset = ConcatDataset(train_dataset)
+
+    if args.debug:
+        # Use enough to fill up the dataloader workers and prefetch, but not more to avoid long training time during debugging
+        train_dataset = Subset(train_dataset, list(range(
+            2*config["batch_size"]*config['num_workers']*config["prefetch_factor"]
+        )))
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=config["batch_size"],
+        shuffle=True,
+        num_workers=config["num_workers"],
+        prefetch_factor=config["prefetch_factor"],
+        drop_last=False,
+        persistent_workers=config.get("persistent_workers", True),
+        pin_memory=True
+    )
+
+    if "eval_batch_size" not in config:
+        config["eval_batch_size"] = config["batch_size"]
+
+    for dataset_type, dataset in test_dataloaders.items():
+        if args.debug:
+            dataset = Subset(dataset, list(range(2*config["eval_batch_size"])))
+        test_dataloaders[dataset_type] = DataLoader(
+            dataset,
+            batch_size=config["eval_batch_size"],
+            shuffle=False,
+            #num_workers=config["num_workers"],
+            num_workers =0, # To avoid OOM
+            persistent_workers=False,
+            #prefetch_factor=config["prefetch_factor"],
+            drop_last=False, # If False and the size of dataset is not divisible by the batch size, then the last batch will be smaller.
+        )
+
+    # Create the model
+    if config["model_type"] == "vint":
+        model = ViNT(
+            context_size=config["context_size"],
+            len_traj_pred=config["len_traj_pred"],
+            learn_angle=config["learn_angle"],
+            obs_encoder=config["obs_encoder"],
+            obs_encoding_size=config["obs_encoding_size"],
+            late_fusion=config["late_fusion"],
+            mha_num_attention_heads=config["mha_num_attention_heads"],
+            mha_num_attention_layers=config["mha_num_attention_layers"],
+            mha_ff_dim_factor=config["mha_ff_dim_factor"],
+        )
+    elif config["model_type"] == "vint_dino":
+        model = ViNTWithDINOTokens(
+            image_size=config["image_size"],
+            context_size=config["context_size"],
+            len_traj_pred=config["len_traj_pred"],
+            learn_angle=config["learn_angle"],
+            obs_encoder=config["obs_encoder"],
+            encoding_size=config["obs_encoding_size"],
+            mha_num_attention_heads=config["mha_num_attention_heads"],
+            mha_num_attention_layers=config["mha_num_attention_layers"],
+            mha_ff_dim_factor=config["mha_ff_dim_factor"],
+            output_layers=config["output_layers"],
+            positional_encoding_type=config.get("positional_encoding_type", "peg"),
+            separate_tokens_and_heads=config.get("separate_tokens_and_heads", False),
+            take_action_history=config.get("take_action_history", False),
+            action_history_deltas_only=config.get("action_history_deltas_only", False),
+            action_enc_layers=config.get("action_enc_layers", [256]),
+            downsample_type=config.get("downsample_type", "avgpool"),
+        )
+    elif config["model_type"] == "vint_da":
+        model = ViNTWithDepthAnything(
+            image_size=config["image_size"],
+            context_size=config["context_size"],
+            len_traj_pred=config["len_traj_pred"],
+            learn_angle=config["learn_angle"],
+            obs_encoder=config["obs_encoder"],
+            encoding_size=config["obs_encoding_size"],
+            mha_num_attention_heads=config["mha_num_attention_heads"],
+            mha_num_attention_layers=config["mha_num_attention_layers"],
+            mha_ff_dim_factor=config["mha_ff_dim_factor"],
+            output_layers=config["output_layers"],
+            positional_encoding_type=config.get("positional_encoding_type", "peg"),
+            separate_tokens_and_heads=config.get("separate_tokens_and_heads", False),
+            add_temporal_pe=config.get("add_temporal_pe", False),
+        )
+    else:
+        raise ValueError(f"Model {config['model_type']} not supported")
+
+    # Multi-GPU
+    if len(config["gpu_ids"]) > 1:
+        model = nn.DataParallel(model, device_ids=config["gpu_ids"])
+    model = model.to(device)
+
+    if config["clipping"]:
+        print("Clipping gradients to", config["max_norm"])
+        for p in model.parameters():
+            if not p.requires_grad:
+                continue
+            p.register_hook(
+                lambda grad: torch.clamp(
+                    grad, -1 * config["max_norm"], config["max_norm"]
+                )
+            )
+
+    lr = float(config["lr"])
+    config["optimizer"] = config["optimizer"].lower()
+    params = model.parameters()
+    if config["model_type"] in ["vint_dino", "vint_da"] and "lr_dino_mult" in config:
+        print("Using different lr for dino encoder with multiplier", config["lr_dino_mult"])
+
+        dino_params = list(model.vision_encoder.parameters())
+        dino_param_ids = {id(p) for p in dino_params}
+        other_params = [p for p in model.parameters() if id(p) not in dino_param_ids]
+
+        params = [
+            {"params": other_params},
+            {"params": dino_params, "lr": lr * config["lr_dino_mult"]},
+        ]
+    if config["optimizer"] == "adam":
+        optimizer = Adam(params, lr=lr, betas=(0.9, 0.98))
+    elif config["optimizer"] == "adamw":
+        optimizer = AdamW(params, lr=lr)
+    elif config["optimizer"] == "sgd":
+        optimizer = torch.optim.SGD(params, lr=lr, momentum=0.9)
+    else:
+        raise ValueError(f"Optimizer {config['optimizer']} not supported")
+
+    scheduler = None
+    if config["scheduler"] is not None:
+        config["scheduler"] = config["scheduler"].lower()
+        if config["scheduler"] == "cosine":
+            print("Using cosine annealing with T_max", config["epochs"])
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer, T_max=config["epochs"]
+            )
+        elif config["scheduler"] == "cosine_timm":
+            print("Using cosine annealing with warmup from timm")
+            scheduler = CosineLRScheduler(
+                optimizer,
+                t_initial=config["epochs"],
+                lr_min=config.get("lr_min", lr / 100),
+                warmup_t=config.get("warmup_epochs", 0),
+                warmup_lr_init=config.get("warmup_lr_init", lr / 100),
+                cycle_mul=1,
+                cycle_decay=1,
+            )
+        elif config["scheduler"] == "cyclic":
+            print("Using cyclic LR with cycle", config["cyclic_period"])
+            scheduler = torch.optim.lr_scheduler.CyclicLR(
+                optimizer,
+                base_lr=lr / 10.,
+                max_lr=lr,
+                step_size_up=config["cyclic_period"] // 2,
+                cycle_momentum=False,
+            )
+        elif config["scheduler"] == "plateau":
+            print("Using ReduceLROnPlateau")
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer,
+                factor=config["plateau_factor"],
+                patience=config["plateau_patience"],
+                verbose=True,
+            )
+        else:
+            raise ValueError(f"Scheduler {config['scheduler']} not supported")
+
+        if config["warmup"] and config["scheduler"] != "cosine_timm":
+            print("Using warmup scheduler")
+            scheduler = GradualWarmupScheduler(
+                optimizer,
+                multiplier=1,
+                total_epoch=config["warmup_epochs"],
+                after_scheduler=scheduler,
+            )
+
+    current_epoch = 0
+    if "pretrained_weights" in config:
+        pretrained_path = config["pretrained_weights"]
+        print("Loading pretrained weights from ", pretrained_path)
+        pretrained_checkpoint = torch.load(pretrained_path, weights_only=False) #map_location=f"cuda:{first_gpu_id}" if torch.cuda.is_available() else "cpu")
+        load_model(model, config["model_type"], pretrained_checkpoint)
+    if "ema" in config:
+        print("Using EMA with decay", config["ema"])
+        model = ModelEmaV2(
+            model,
+            decay=config["ema"],
+            device=device,
+        )
+    if "load_run" in config:
+        load_project_folder = os.path.join("logs", config["load_run"])
+        print("Loading model from ", load_project_folder)
+        latest_path = os.path.join(load_project_folder, "latest.pth")
+        latest_checkpoint = torch.load(latest_path) #f"cuda:{}" if torch.cuda.is_available() else "cpu")
+        load_model(model, config["model_type"], latest_checkpoint)
+        if "epoch" in latest_checkpoint:
+            current_epoch = latest_checkpoint["epoch"] + 1
+
+    if "freeze_encoders" in config and config["freeze_encoders"]:
+        print("Freezing vision encoder weights")
+        
+        # Handle cases where model might be wrapped (e.g. ModelEmaV2)
+        if hasattr(model, "module"):
+            model_to_freeze = model.module
+        else:
+            model_to_freeze = model
+
+        if config["model_type"] == "vint":
+            for param in model_to_freeze.obs_encoder.parameters():
+                param.requires_grad = False
+        elif config["model_type"] == "vint_dino":
+            for param in model_to_freeze.vision_encoder.parameters():
+                param.requires_grad = False
+        elif config["model_type"] == "vint_da":
+            for param in model_to_freeze.vision_encoder.parameters():
+                param.requires_grad = False
+        else:
+            raise ValueError(f"Model {config['model_type']} not supported for freezing encoders")
+
+    if "load_run" in config:  # load optimizer and scheduler after data parallel
+        if "optimizer" in latest_checkpoint:
+            optimizer.load_state_dict(latest_checkpoint["optimizer"].state_dict())
+        if scheduler is not None and "scheduler" in latest_checkpoint:
+            scheduler.load_state_dict(latest_checkpoint["scheduler"].state_dict())
+
+    # Set default distance loss coefficient if not specified
+    if "distance_loss_coeff" not in config:
+        config["distance_loss_coeff"] = 0.01
+    
+    # Set default action loss type if not specified
+    if "action_loss_type" not in config:
+        config["action_loss_type"] = "mse"
+
+    # Set default distance loss type if not specified
+    if "distance_loss_type" not in config:
+        config["distance_loss_type"] = "mse"
+
+    if config["model_type"] in ["vint", "vint_dino", "vint_da"]:
+        train_eval_loop(
+            train_model=config["train"],
+            model=model,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            dataloader=train_loader,
+            test_dataloaders=test_dataloaders,
+            transform=transform,
+            epochs=config["epochs"],
+            device=device,
+            project_folder=config["project_folder"],
+            normalized=config["normalize"],
+            print_log_freq=config["print_log_freq"],
+            wandb_log_freq=config["wandb_log_freq"],
+            image_log_freq=config["image_log_freq"],
+            num_images_log=config["num_images_log"],
+            current_epoch=current_epoch,
+            learn_angle=config["learn_angle"],
+            alpha=config["alpha"],
+            use_wandb=config["use_wandb"],
+            eval_fraction=config["eval_fraction"],
+            log_high_loss_samples=config.get("log_high_loss_samples", False),
+            ignore_high_loss_epochs=config.get("ignore_high_loss_epochs", 0),
+            high_loss_threshold=config.get("high_loss_threshold", 10.0),
+            max_high_loss_samples=config.get("max_high_loss_samples", 10),
+            distance_loss_coeff=config["distance_loss_coeff"],
+            action_loss_type=config["action_loss_type"],
+            distance_loss_type=config["distance_loss_type"],
+            pass_action_history=config.get("take_action_history", False),
+        )
+    else:
+        raise ValueError(f"Model {config['model_type']} not supported for training")
+
+    print("FINISHED TRAINING")
+
+
+if __name__ == "__main__":
+    torch.multiprocessing.set_start_method("spawn")
+
+    parser = argparse.ArgumentParser(description="Visual Navigation Transformer")
+
+    # project setup
+    parser.add_argument(
+        "--config",
+        "-c",
+        default="config/vint.yaml",
+        type=str,
+        help="Path to the config file in train_config folder",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="If set, will use a smaller subset of the data and fewer epochs for quick testing",
+    )
+    args = parser.parse_args()
+
+    if args.debug:
+        torch.autograd.set_detect_anomaly(True)
+
+    with open("config/defaults.yaml", "r") as f:
+        default_config = yaml.safe_load(f)
+
+    config = default_config
+
+    with open(args.config, "r") as f:
+        user_config = yaml.safe_load(f)
+
+    config.update(user_config)
+    config = resolve_env_vars(config)
+
+    config["run_name"] += "_" + time.strftime("%Y_%m_%d_%H_%M_%S")
+    config["project_folder"] = os.path.join(
+        config["log_folder"], config["project_name"], config["run_name"]
+    )
+    os.makedirs(
+        config[
+            "project_folder"
+        ],  # should error if dir already exists to avoid overwriting and old project
+    )
+
+    wandb.login()
+    wandb.init(
+        project=config["project_name"],
+        settings=wandb.Settings(start_method="fork"),
+        entity=config["wandb_entity"],
+        dir=config["wandb_dir"],
+        mode="disabled" if not config["use_wandb"] else "online",
+    )
+    wandb.save(args.config, policy="now")  # save the config file
+    wandb.run.name = config["run_name"]
+    # update the wandb args with the training configurations
+    if wandb.run:
+        wandb.config.update(config)
+
+    print(config)
+    main(config)

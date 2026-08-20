@@ -1,0 +1,7 @@
+vint: 
+  config_path: "../../train/config/vint.yaml"
+  ckpt_path: "../model_weights/vint.pth"
+
+dinonav: 
+  config_path: "../../train/config/vint_dino_metric_hpc.yaml"
+  ckpt_path: "../model_weights/dinonav.pth"
