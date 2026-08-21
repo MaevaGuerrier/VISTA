@@ -20,17 +20,24 @@ topo() {
     (cd /workspace/src/deployment/src && ./create_topomap.sh "$@")
 }
 
-
 bag() {
     local robot="limo"
     local env="unknown"
     local trial="1"
+    
+    local config_file="/workspace/src/deployment/src/topic_names.py"
+
+    # Extract string values, ignoring comments
+    local img_topic
+    local info_topic
+    img_topic=$(grep -E "^IMAGE_TOPIC\s*=" "$config_file" | sed -E 's/#.*//; s/.*=\s*["'\''"]([^"'\'']+)["'\''"].*/\1/')
+    info_topic=$(grep -E "^IMAGE_INFO_TOPIC\s*=" "$config_file" | sed -E 's/#.*//; s/.*=\s*["'\''"]([^"'\'']+)["'\''"].*/\1/')
+
     local topics=(
-        "/depth/image"
-        "/depth/camera_info"
+        "$img_topic"
+        "$info_topic"
     )
 
-    # Parse key:=value style args
     for arg in "$@"; do
         case "$arg" in
             robot:=*) robot="${arg#robot:=}" ;;

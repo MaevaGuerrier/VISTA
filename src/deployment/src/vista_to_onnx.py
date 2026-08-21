@@ -202,7 +202,7 @@ def main():
     parser.add_argument(
         "--output",
         type=str,
-        default="vint_dino_metric.onnx",
+        default="vista.onnx",
         help="Output ONNX file path (default: vint_dino_metric.onnx)",
     )
     parser.add_argument(
