@@ -19,15 +19,26 @@
 
 
 
-<img src="medias/bunker_timelapse_VISTA.webp" width="32%" alt="Bunker navigation demo">
-<img src="medias/cut_canva_G1_timelapse_VISTA.webp" width="32%" alt="Bunker navigation demo">
-<img src="medias/cut_canva_spot_timelapse_VISTA.webp" width="32%" alt="Bunker navigation demo">
+<table>
+  <tr>
+    <td><img src="medias/bunker_timelapse_VISTA.webp" width="100%" alt="Bunker navigation demo"></td>
+    <td><img src="medias/cut_canva_G1_timelapse_VISTA.webp" width="100%" alt="Unitree G1 navigation demo"></td>
+    <td><img src="medias/cut_canva_spot_timelapse_VISTA.webp" width="100%" alt="Spot navigation demo"></td>
+  </tr>
+</table>
 
 # Overview
+
+
 
 <p align="center">
   <img src="medias/first_fig.svg" alt="pitch" width="70%"/>
 </p>
+
+
+
+> [!NOTE] 
+> RGB cameras are lightweight, inexpensive, and semantically rich, letting VISTA avoid LiDAR's cost-resolution trade-off as well as its degraded performance on reflective or transparent surfaces. This choice enables metric-free navigation through sparse topological maps and direct goal-image generation via world models (future work), rather than relying on dense geometric maps. Building on this foundation, VISTA combines two key components: a more expressive visual encoder (DINOv3) and Action History (AH). The encoder ensures the model preserves the correct *shape* of a trajectory regardless of how observations are sampled, while Action History supplies the metric grounding needed to recover real-world scale, something that images alone cannot reliably provide. Together, these components let VISTA generate trajectories that are both geometrically consistent and metrically accurate, which prior models could not achieve simultaneously.
 
 
 <details>
@@ -38,8 +49,15 @@
     <img src="medias/architecture.svg" alt="architecture" width="70%"/>
   </p>
 
+
+- DINOv3 preserves trajectory shape regarldess of the observation frequency.
+- Action History addresses a separate problem: metric scale. Scale barely matters in open, low-collision-risk environments like Outdoor, but becomes essential in cluttered scenes like Office-Lab, where accurate metric grounding is required to avoid collisions. 
+
+
 </details>
 &nbsp;
+
+
 
 &nbsp;
 
@@ -50,7 +68,8 @@
 - Provide website link
 - Explain how to train
 - Explain robot deployment
-- Explain results showcase
+- ~~Explain results showcase~~
+- Resolves remainng WIPs 
 
 
 &nbsp;
@@ -70,19 +89,20 @@ Place the downloaded weights in ```src/deployment/model_weights```.
 
 Run the script ```./docker_setup.sh```.
 
-If you want to test VISTA on your local computer, use *option 1*; choose *option 2* to run VISTA onboard your robot!
+If you want to test VISTA on your local computer, use *option 1*; choose *option 2* to run VISTA for your robot!
 
-<img src="medias/menu_local_robot.svg" width="15%" alt="terminal">
+<img src="medias/menu_local_robot.svg" width="25%" alt="terminal">
 
 <details>
   <summary><strong><span style="font-size: 1.5em;">VISTA deploy on local computer with simulation</span></strong></summary>
   &nbsp;
 
-  Docker image build time: ~11 min.
+  > [!NOTE]
+  > Docker image build time: ~11 min.
 
-  Upon choosing *option 1*, you will need to build the docker once, selecting *option 1* in the next menu. Once the docker is built (see the Troubleshooting section in case of build failure), re-run the script ```./docker_setup.sh```, this time using *option 1* followed by *option 2* to start the container. You can attach as many containers as you wish using *option 7* — to do so, repeat ```./docker_setup.sh```, using *option 1* followed by *option 7*.
+  Upon choosing *option 1*, you will need to build the docker once, selecting *option 1* in the next menu. Once the docker is built (see the Troubleshooting section in case of build failure), re-run the script ```./docker_setup.sh```, this time using *option 1* followed by *option 2* to start the container. You can attach as many containers as you wish using *option 7*  to do so, repeat ```./docker_setup.sh```, using *option 1* followed by *option 7*.
 
-  <img src="medias/menu_choice.svg" width="15%" alt="terminal">
+  <img src="medias/menu_choice.svg" width="25%" alt="terminal">
 
   This setup will start by launching two [tmux](https://github.com/tmux/tmux/wiki/) terminals: the *right* terminal contains aliases to launch the navigation scripts, while the *left* terminal contains the gazebo simulation.
 
@@ -115,9 +135,11 @@ If you want to test VISTA on your local computer, use *option 1*; choose *option
   | bag | Record a ros2 bag named ```{robot}_{env}_trial_{trial}``` in ```src/deployment/topomaps/bags```, based on the topics given in ```topic_names.py``` | ```bag robot:={default:limo} trial:={default:1} env:={name_of_your_choice}``` |
   | topo* | Create the topological map in ```src/deployment/topomaps/images``` | ```topo {bag_name} {name_of_topological_map}``` |
 
-  > ⚠️ topo*: Make sure you stop the simulation first. While the simulation is running, ros2 will also be subscribed to the image topic being streamed by the simulation, so the topological map will not be created properly.
+  > [!CAUTION]
+  > topo*: Make sure you stop the simulation first. While the simulation is running, ros2 will also be subscribed to the image topic being streamed by the simulation, so the topological map will not be created properly.
 
-  > ⚠️ Gazebo is not a photorealistic simulator, so the model will not show the same performance here as reported in the real world. This simulation is provided as a playground for learning how to navigate with the model, record bags to build topomaps, and create topological maps (see the Topological Map section).
+  > [!NOTE]
+  > Gazebo is not a photorealistic simulator, so the model will not show the same performance here as reported in the real world. This simulation is provided as a playground for learning how to navigate with the model, record bags to build topomaps, and create topological maps (see the Topological Map section).
 
 </details>
 &nbsp;
@@ -138,7 +160,8 @@ If you want to test VISTA on your local computer, use *option 1*; choose *option
 
   - **Jetson Orin JetPack 6.2.1 running L4T Linux for Tegra R36.4.4:** *(optional — onboard deployment is recommended, but you can also run inference on a separate machine and send `cmd_vel` commands to the robot over ROS2)*.
 
-  > ⚠️ We have set the **ROS_DOMAIN_ID** to **126** — make sure you do the same for your ROS2 setup, or change it to another value in ```.devcontainer/vista_ros2/setup.sh```.
+  > [!CAUTION]
+  > We have set the **ROS_DOMAIN_ID** to **126** — make sure you do the same for your ROS2 setup, or change it to another value in ```.devcontainer/vista_ros2/setup.sh```.
 
   **Setup for Deployment**
 
@@ -185,21 +208,58 @@ We provide aliases to help you easily record bags and create topological maps.
 
 where ```{name_of_topological_map}``` is the name you want to give to your topological map, and ```{bag_name}``` is the one you recorded as the **reference trajectory**.
 
-Running the command will bring up the following terminals; simply press **Enter**:
+> [!CAUTION]
+> ⚠️ topo*: Make sure you stop the simulation (or your ROS2 node) first. You don't want any other node publishing to the image topic while creating the topological map, otherwise it will not be created properly.
+
+&nbsp;
+
+To record a bag, simply type the ```bag``` alias:
+
+**Case 1 — Local PC with simulation**
+
+> [!IMPORTANT]
+> We assume you followed the steps above, running the docker with *option 1* followed by *option 2*.
+Run the ```bag``` command in the *left* terminal — not in the simulation terminal on the *right*.
+
+**Case 2 — Onboard robot**
+
+> [!IMPORTANT]
+> We assume you followed the steps above, running the docker with *option 2* followed by *option 2*.
+Simply run the ```bag``` command as explained in the table above.
+
+&nbsp;
+
+Running the ```topo``` command will bring up the following terminals; simply press **Enter**:
 
 <img src="medias/topo_creation.svg" width="80%" alt="topo creation">
 
-```rosbag play -r 1.5 <bag_filename>```: Plays the rosbag at 1.5x speed, so the recording script captures nodes roughly 1.5 seconds apart. You can adjust this value as needed.
+> [!TIP]
+> ```rosbag play -r 1.5 <bag_filename>```: Plays the rosbag at 1.5x speed, so the recording script captures nodes roughly 1.5 seconds apart. You can adjust this value as needed.
 
 &nbsp;
 
-# WIP - Navigation Arguments
+# Navigation Arguments
 
+| Argument | Short | Default | Description |
+| --- | --- | --- | --- |
+| `--model` | `-m` | `VISTA` | ONNX model name (without the `.onnx` extension). |
+| `--waypoint` | `-w` | `1` | Index of the waypoint used for control. |
+| `--dir` | `-d` | `bag5_` | Topomap image subdirectory name. |
+| `--goal-node` | `-g` | `-1` | Goal node index (`-1` = last node). |
+| `--close-threshold` | `-t` | `10` | Distance threshold for advancing to the closest node. |
+| `--radius` | `-r` | `2` | Topomap look-ahead/behind radius. |
+| `--viz-path` | `-v` | `visualizations/model_preds` | **WIP** - Directory for saving visualization images. |
+| `--num-samples` | `-n` | `8` | Number of sampled actions. |
 
+**Example usage:**
+
+```bash
+vista "--dir warehouse --waypoint 2 --num-samples 10"
+```
 
 &nbsp;
 
-# WIP - VISTA in action !
+# VISTA in action ! 
 
 
 ## Navigates Tight Spaces
@@ -208,15 +268,22 @@ Running the command will bring up the following terminals; simply press **Enter*
 
 &nbsp;
 
+VISTA is able to navigate tight spaces in unseen environments. By combining DINOv3 with Action History, VISTA closely follows the intended trajectory and successfully grounds its predicted trajectory into real-world scale, enabling collision avoidance in tight spaces.
+
 ## Robust to environment changes
 
 
-<img src="medias/camview_topo_pertur.webp" width="49%" alt="Bunker navigation demo">
-<img src="medias/ros_topo_pertur.webp" width="49%" alt="Bunker navigation demo">
+<table>
+  <tr>
+    <td><img src="medias/camview_topo_pertur.webp" width="100%" alt="Bunker navigation demo"></td>
+    <td><img src="medias/ros_topo_pertur.webp" width="100%" alt="Bunker navigation demo"></td>
+  </tr>
+</table>
 
-*To see more, heads up to our website!*
+In this experiment, we probe VISTA's robustness against strong changes in the environment. Previously, the door was open, allowing VISTA to follow the path and exit into the corridor. In this case, however, the door is closed for 20 seconds, preventing VISTA from exiting the room. Yet VISTA does not collide with the door. Thanks to the strong representations enabled by DINOv3 and the grounding provided by Action History, VISTA progressively slows down, comes to a halt, and tries to align its current observation with the sub-goal image.
 
-
+&nbsp;
+> 🌐 **Want to see more?** [WIP - Visit our website](https://your-website-url.com)
 &nbsp;
 
 # Troubleshooting 🆘
@@ -259,6 +326,7 @@ RUN wget {clean_link} -O onnxruntime_gpu-{version}-cp310-cp310-linux_aarch64.whl
 
 **REBULD the docker see option 2 in section Setup for Deployment.2**
 
+> [!IMPORTANT]
 > Note the onnx version might need changes as well try first without changing then see what version is compatible with the chosen onnxruntime wheel.
 > The ONNX models are cross-platform compatible but if you need to rebuilt it see section below.
 
@@ -266,7 +334,7 @@ RUN wget {clean_link} -O onnxruntime_gpu-{version}-cp310-cp310-linux_aarch64.whl
 
 Go into the folder ```src/deployment/src/``` and use the python file ```vista_to_onnx```, beforehand change the name of the model *(.pth)* file into the line ```model_name={name}```.
 
-
+&nbsp;
 
 # Citing 🖊️
 
