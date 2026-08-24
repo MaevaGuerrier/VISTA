@@ -1,8 +1,8 @@
 # VISTA: Scale-Aware Visual Navigation via Action History Conditioning
 
 **[Maeva Guerrier](https://scholar.google.com/citations?hl=fr&user=4-GRCBsAAAAJ), Koki Kobayashi, [Simon Roy](https://scholar.google.ca/citations?user=Ltu98iQAAAAJ&hl=fr), [Jana Pavlasek](https://scholar.google.com/citations?hl=fr&user=yJS-u7IAAAAJ), [Giovanni Beltrame](https://scholar.google.com/citations?hl=fr&user=TVHJJ9wAAAAJ)**  
-<img src="medias/poly_logo.svg" width="9%" alt="Bunker navigation demo">
-<img src="medias/mila_logo.svg" width="10%" alt="Bunker navigation demo">
+<img src="medias/poly_logo.svg" width="14%" alt="Bunker navigation demo">
+<img src="medias/mila_logo.svg" width="15%" alt="Bunker navigation demo">
 
 
 [![arXiv](https://img.shields.io/badge/arXiv-2606.17294-b31b1b.svg)](https://arxiv.org/abs/2606.17294)
@@ -97,8 +97,7 @@ If you want to test VISTA on your local computer, use *option 1*; choose *option
   <summary><strong><span style="font-size: 1.5em;">VISTA deploy on local computer with simulation</span></strong></summary>
   &nbsp;
 
-  > [!NOTE]
-  > Docker image build time: ~11 min.
+  > ℹ️ Docker image build time: ~11 min.
 
   Upon choosing *option 1*, you will need to build the docker once, selecting *option 1* in the next menu. Once the docker is built (see the Troubleshooting section in case of build failure), re-run the script ```./docker_setup.sh```, this time using *option 1* followed by *option 2* to start the container. You can attach as many containers as you wish using *option 7*  to do so, repeat ```./docker_setup.sh```, using *option 1* followed by *option 7*.
 
@@ -135,11 +134,9 @@ If you want to test VISTA on your local computer, use *option 1*; choose *option
   | bag | Record a ros2 bag named ```{robot}_{env}_trial_{trial}``` in ```src/deployment/topomaps/bags```, based on the topics given in ```topic_names.py``` | ```bag robot:={default:limo} trial:={default:1} env:={name_of_your_choice}``` |
   | topo* | Create the topological map in ```src/deployment/topomaps/images``` | ```topo {bag_name} {name_of_topological_map}``` |
 
-  > [!CAUTION]
-  > topo*: Make sure you stop the simulation first. While the simulation is running, ros2 will also be subscribed to the image topic being streamed by the simulation, so the topological map will not be created properly.
+  > ⚠️ topo*: Make sure you stop the simulation first. While the simulation is running, ros2 will also be subscribed to the image topic being streamed by the simulation, so the topological map will not be created properly.
 
-  > [!NOTE]
-  > Gazebo is not a photorealistic simulator, so the model will not show the same performance here as reported in the real world. This simulation is provided as a playground for learning how to navigate with the model, record bags to build topomaps, and create topological maps (see the Topological Map section).
+  > ℹ️ Gazebo is not a photorealistic simulator, so the model will not show the same performance here as reported in the real world. This simulation is provided as a playground for learning how to navigate with the model, record bags to build topomaps, and create topological maps (see the Topological Map section).
 
 </details>
 &nbsp;
@@ -160,8 +157,7 @@ If you want to test VISTA on your local computer, use *option 1*; choose *option
 
   - **Jetson Orin JetPack 6.2.1 running L4T Linux for Tegra R36.4.4:** *(optional — onboard deployment is recommended, but you can also run inference on a separate machine and send `cmd_vel` commands to the robot over ROS2)*.
 
-  > [!CAUTION]
-  > We have set the **ROS_DOMAIN_ID** to **126** — make sure you do the same for your ROS2 setup, or change it to another value in ```.devcontainer/vista_ros2/setup.sh```.
+  > ⚠️ We have set the **ROS_DOMAIN_ID** to **126** — make sure you do the same for your ROS2 setup, or change it to another value in ```.devcontainer/vista_ros2/setup.sh```.
 
   **Setup for Deployment**
 
