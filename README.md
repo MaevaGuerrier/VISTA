@@ -6,7 +6,7 @@
 
 
 [![arXiv](https://img.shields.io/badge/arXiv-2606.17294-b31b1b.svg)](https://arxiv.org/abs/2606.17294)
-[![website](https://img.shields.io/badge/website-WIP-blue)](https://maevaguerrier.github.io/papers-pages/)
+[![website](https://img.shields.io/badge/website-link-blue)](https://maevaguerrier.github.io/papers-pages/vista.html)
 [![HF](https://img.shields.io/badge/🤗HuggingFace-WIP-coral)](WIP)
 [![models](https://img.shields.io/badge/models_onnx-link-green)](https://drive.google.com/drive/u/1/folders/1Ekql9bQT3sQxECGZI056F1ps3x9Jj3va)
 ![Python](https://img.shields.io/badge/Python-3.10.12-blue)
